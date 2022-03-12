@@ -2,10 +2,11 @@
 
 # LAB1
 
-####Objetivo
+#Objetivo
+
 Este laboratório consiste em configurar e validar todo o ambiente necessário para o desenvolvimento da disciplina de sistemas embarcados utilizando a IDE IAR e o kit da placa Tiva.
 
-####Desenvolvimento
+#Desenvolvimento
 1. Primeiro passo foi baixar a IDE IAR Embedded Workbench for ARM (v 9.20).
 
 2. Registrar como “Code size limited”.
