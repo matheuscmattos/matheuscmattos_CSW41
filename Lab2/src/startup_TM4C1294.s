@@ -73,7 +73,7 @@ __vector_table_0x1c
                 DCD     DebugMon_Handler    ;  -4 Debug Monitor Handler
                 DCD     0                   ;     Reserved
                 DCD     PendSV_Handler      ;  -2 PendSV Handler
-                DCD     SysTick_Handler     ;  -1 SysTick Handler
+                DCD     Minha_Int           ;  -1 SysTick Handler
 
                 ; Interrupts
                 DCD     GPIOA_Handler       ;    0 GPIO Port A
@@ -221,7 +221,7 @@ __iar_init_vfp
                 PUBWEAK SVC_Handler
                 PUBWEAK DebugMon_Handler
                 PUBWEAK PendSV_Handler
-                PUBWEAK SysTick_Handler
+                PUBWEAK Minha_Int
 
                 PUBWEAK GPIOA_Handler
                 PUBWEAK GPIOB_Handler
@@ -331,7 +331,7 @@ UsageFault_Handler
 SVC_Handler
 DebugMon_Handler
 PendSV_Handler
-SysTick_Handler
+Minha_Int
 
 GPIOA_Handler
 GPIOB_Handler

@@ -32,6 +32,7 @@
 #include "driverlib/systick.h"
 #include "driverlib/interrupt.h"
 #include "driverlib/debug.h"
+#include "driverlib/flash.h"
 
 //*****************************************************************************
 //
@@ -72,7 +73,7 @@ __error__(char *pcFilename, uint32_t ui32Line)
 //*****************************************************************************
 volatile uint32_t cont_inter = 0;
 //contar interrupcao para segundos
-void SysTickIntHandler(void)
+void Minha_Int(void)
 {
     cont_inter++;
 } 
@@ -105,7 +106,7 @@ main(void)
     //habilitar systick e interrupcao
     IntMasterEnable();//habilita a interrupção do processador
     SysTickPeriodSet(10000000);//define o período do contador
-    SysTickIntRegister(SysTickIntHandler);//registra um manipulador de interrupção para a interrupção do sysstick
+    //SysTickIntRegister(SysTickIntHandler);//registra um manipulador de interrupção para a interrupção do sysstick
     SysTickEnable();//habilita o contador
     SysTickIntEnable();//habilita a interrupcao	
 	
