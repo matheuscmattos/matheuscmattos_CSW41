@@ -28,6 +28,10 @@
 #include "inc/hw_memmap.h"
 #include "driverlib/sysctl.h"
 #include "driverlib/gpio.h"
+#include <stdio.h>
+#include "driverlib/systick.h"
+#include "driverlib/interrupt.h"
+#include "driverlib/debug.h"
 
 //*****************************************************************************
 //
@@ -46,8 +50,7 @@
 //
 //*****************************************************************************
 
-#define USER_LED1  GPIO_PIN_0
-#define USER_LED2  GPIO_PIN_1
+
 
 //*****************************************************************************
 //
@@ -58,6 +61,7 @@
 void
 __error__(char *pcFilename, uint32_t ui32Line)
 {
+  while(1);
 }
 #endif
 
@@ -66,57 +70,73 @@ __error__(char *pcFilename, uint32_t ui32Line)
 // Main 'C' Language entry point.  Toggle an LED using TivaWare.
 //
 //*****************************************************************************
+volatile uint32_t cont_inter = 0;
+//contar interrupcao para segundos
+void SysTickIntHandler(void)
+{
+    cont_inter++;
+} 
+	
 int
 main(void)
 {
-    uint32_t ui32SysClock;
+    uint32_t leitura_pin = 0, cont_clock = 0;
 
-    //
-    // Run from the PLL at 120 MHz.
-    // Note: SYSCTL_CFG_VCO_240 is a new setting provided in TivaWare 2.2.x and
-    // later to better reflect the actual VCO speed due to SYSCTL#22.
-    //
-    ui32SysClock = SysCtlClockFreqSet((SYSCTL_XTAL_25MHZ |
-                                       SYSCTL_OSC_MAIN |
-                                       SYSCTL_USE_PLL |
-                                       SYSCTL_CFG_VCO_240), 120000000);
+	
+    // Configuracao de perifericos (botao)
+    SysCtlPeripheralEnable(SYSCTL_PERIPH_GPIOJ); //habilita o periferico usado para o botao 
+    while(!SysCtlPeripheralReady(SYSCTL_PERIPH_GPIOJ))// Determina se o periferico esta pronto
+    { 
+    }
 
-    //
-    // Enable and wait for the port to be ready for access
-    //
-    SysCtlPeripheralEnable(SYSCTL_PERIPH_GPION);
-    while(!SysCtlPeripheralReady(SYSCTL_PERIPH_GPION))
+    // Configuracao de perifericos (LED)
+    SysCtlPeripheralEnable(SYSCTL_PERIPH_GPION);//habilita o periferico usado para o led
+    while(!SysCtlPeripheralReady(SYSCTL_PERIPH_GPION))//Determina se o periferico esta pronto
     {
     }
-    
-    //
-    // Configure the GPIO port for the LED operation.
-    //
-    GPIOPinTypeGPIOOutput(GPIO_PORTN_BASE, (USER_LED1|USER_LED2));
 
-    //
-    // Loop Forever
-    //
-    while(1)
+    // GPIO Pin
+    GPIOPinTypeGPIOInput(GPIO_PORTJ_BASE, GPIO_PIN_0);//configura o pino para uso como input do GPIO
+	
+    GPIOPinTypeGPIOOutput(GPIO_PORTN_BASE, GPIO_PIN_1);//configura o pino para uso como output do GPIO
+    GPIOPadConfigSet(GPIO_PORTJ_BASE ,GPIO_PIN_0,GPIO_STRENGTH_2MA,GPIO_PIN_TYPE_STD_WPU);// set a configuracao do pad para um pino
+
+	
+    //habilitar systick e interrupcao
+    IntMasterEnable();//habilita a interrupção do processador
+    SysTickPeriodSet(10000000);//define o período do contador
+    SysTickIntRegister(SysTickIntHandler);//registra um manipulador de interrupção para a interrupção do sysstick
+    SysTickEnable();//habilita o contador
+    SysTickIntEnable();//habilita a interrupcao	
+	
+    cont_inter = 0;
+	
+    GPIOPinWrite(GPIO_PORTN_BASE, GPIO_PIN_1, 0x00);//escreve um valor no pino especificado
+
+    // espera 1s para acender o led equivalente a 12 interrupcoes
+    while(cont_inter < 12){
+    }
+   
+    GPIOPinWrite(GPIO_PORTN_BASE, GPIO_PIN_1, GPIO_PIN_1);//escreve um valor no pino especificado    
+
+    leitura_pin = GPIOPinRead(GPIO_PORTJ_BASE, GPIO_PIN_0);//le o valor dos pinos especificados 
+    cont_clock = SysTickValueGet();//pega o valor do contador   
+	
+    //le se o pino foi pressionado em ate 3s
+    while (leitura_pin == 1 && cont_inter < 36)
     {
-        //
-        // Turn on the LED
-        //
-        GPIOPinWrite(GPIO_PORTN_BASE, (USER_LED1|USER_LED2), USER_LED1);
-
-        //
-        // Delay for a bit
-        //
-        SysCtlDelay(ui32SysClock/6);
-
-        //
-        // Turn on the LED
-        //
-        GPIOPinWrite(GPIO_PORTN_BASE, (USER_LED1|USER_LED2), USER_LED2);
-
-        //
-        // Delay for a bit
-        //
-        SysCtlDelay(ui32SysClock/6);
+      	leitura_pin = GPIOPinRead(GPIO_PORTJ_BASE, GPIO_PIN_0);//le o valor dos pinos especificados 
+    }
+    	if(cont_inter >= 36)
+	{
+		printf("Não foi pressionado o botão em menos de 3 segundos!\n");
+	}
+    else{
+    //Quantidade Clocks
+    cont_clock = (SysTickValueGet() - cont_clock) + (10000000 * cont_inter);
+    float temp = 0.000000008333*cont_clock;
+    
+    printf("Quantidade Clocks: %d\n", cont_clock);
+    printf("Segundos: %f\n", temp);
     }
 }

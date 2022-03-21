@@ -1435,7 +1435,10 @@
             <name>$PROJ_DIR$\src\blinky.c</name>
         </file>
         <file>
-            <name>$PROJ_DIR$\src\startup_ewarm.c</name>
+            <name>$PROJ_DIR$\src\startup_TM4C1294.s</name>
+        </file>
+        <file>
+            <name>$PROJ_DIR$\src\system_TM4C1294.c</name>
         </file>
     </group>
 </project>
