@@ -56,7 +56,8 @@ TX_MUTEX mutex;
 TX_BYTE_POOL bytePool;
 TX_BLOCK_POOL block_pool_0;
 UCHAR bytePoolMemory[ELEVATOR_BYTE_POOL_SIZE];
-//This will initialize the microcontroller
+
+
 void UARTInit(void){
   //Initialize peripherals
   SysCtlPeripheralEnable(SYSCTL_PERIPH_UART0);
@@ -73,7 +74,8 @@ void UARTInit(void){
   BufferPos = 0;
   LastPos = 0;
 }
-//Main function
+
+
 int main(){
   IntMasterEnable();
   SysTickPeriodSet(2500000);
@@ -82,33 +84,39 @@ int main(){
   UARTInit();
   tx_kernel_enter();
 }
-//Mutex get function
+
+//Função para obter Mutex
 bool sendGetMutexAndcheckStatus(){
   return ((UINT) tx_mutex_get(&mutex, TX_WAIT_FOREVER)) == TX_SUCCESS;
 }
-//Mutex put function
+
+//Função para devolver Mutex 
 bool sendPutMutexAndcheckStatus(){
   return ((UINT) tx_mutex_put(&mutex)) == TX_SUCCESS;
 }
-//This method will be invoked to send end line commands
+
+//envia comandos para final de linha
 void commandFinalizer(bool finalizer){
   if (finalizer){
     UARTCharPut(UART0_BASE, '\n');
     UARTCharPut(UART0_BASE, '\r');
   }
 }
-//This method will be invoked to send single command
+
+//envia um unico comando
 void sendCommand(char comm, bool finalizer){
   UARTCharPut(UART0_BASE, comm);
   commandFinalizer(finalizer);
 }
-//This method will be invoked to send multiple commands into single line
+
+//envia varios comandos
 void sendSingleCommand(char elevator, char comm, bool finalizer){
   sendCommand(elevator, false);
   sendCommand(comm, false);
   commandFinalizer(finalizer);
 }
-//This method will check the led status
+
+//Verifica o status do Led ON ou OFF
 void ledStatus(char elevator, char floor, int turnon){
   UINT status = tx_mutex_get(&mutex, TX_WAIT_FOREVER);
   if (status != TX_SUCCESS)
@@ -127,7 +135,8 @@ void ledStatus(char elevator, char floor, int turnon){
   if (status != TX_SUCCESS)
     return;
 }
-//This methos will turn on and off a button
+
+//Liga e desliga botão
 void switchButton(char elevator, char floor, bool turnon){
   if (!sendGetMutexAndcheckStatus()) return;
   sendSingleCommand(elevator, (turnon) ? 'L' : 'D', false);
@@ -135,15 +144,17 @@ void switchButton(char elevator, char floor, bool turnon){
   sendCommand('\r', false);
   if (!sendPutMutexAndcheckStatus()) return;
 }
-//This method will turn off all buttons for a given elevator
+
+//Desliga todos os botões do elevador
 void turnOffAllButtons(char elevator){
   char floors[] = "abcdefghijklmnop";
   for (int i=0; i<strlen(floors); i++){
     switchButton(elevator, floors[i], false);
-    tx_thread_sleep(2); // to avoid overload commands
+    tx_thread_sleep(2);
   }
 }
-//This method will initialize the elevator
+
+//Inicializa o elevador
 void initElevator(char elevator){
   if (!sendGetMutexAndcheckStatus()) return;
   sendSingleCommand(elevator, 'r', false);
@@ -154,7 +165,8 @@ void initElevator(char elevator){
   if (!sendPutMutexAndcheckStatus()) return;
   turnOffAllButtons(elevator);
 }
-//This method will close and open the doors
+
+//Abre e fecha as portas
 void doorStatus(char elevator){
   if (!sendGetMutexAndcheckStatus()) return;
   sendSingleCommand(elevator, 'a', true);
@@ -164,7 +176,8 @@ void doorStatus(char elevator){
   sendSingleCommand(elevator, 'f', true);
   if (!sendPutMutexAndcheckStatus()) return;
 }
-//This method will move up or down the elevator
+
+//Movimentação do elevador
 bool moveOrStopElevator(char elevator, int movement){
   bool ret = true;
   if (!sendGetMutexAndcheckStatus()) return false;
@@ -172,21 +185,23 @@ bool moveOrStopElevator(char elevator, int movement){
     sendSingleCommand(elevator, 's', true);
   else if (movement == MOVE_DOWN)
     sendSingleCommand(elevator, 'd', true);
-  else { // STOP_MOVE
+  else {
     sendSingleCommand(elevator, 'p', true);
     ret = false;
   }
   if (!sendPutMutexAndcheckStatus()) return false;
   return ret;
 }
-//This method is used to convert Char to String
+
+//Converte char para string
 char * convertCharToString(char c){
     char str1[2] = {c , '\0'};
     char *str = malloc(5);
     strcpy(str,str1);
     return str;
 }
-//This method is used find the index of a given char into a string
+
+//Busca o index da string
 int indexOf(char * src, char search){
     char * found = strstr( src, convertCharToString(search) );
     int index = -1;
@@ -194,7 +209,8 @@ int indexOf(char * src, char search){
       index = found - src;
 	return index;
 }
-//This method is used to convert char to Int
+
+//Converte char para int
 int charToInt(char value){
     if (isdigit(value)){
         char numbersChar[] = "0123456789";
@@ -204,18 +220,20 @@ int charToInt(char value){
     }
     return -1;
 }
-//This method will return the corresponding letter to the given numeric floor
+
+//Retorna o andar correspondente
 char getFloor(char command1, char command2){
-  if (!isdigit(command1) || !isdigit(command2)) return ' '; //skip if not numeric
+  if (!isdigit(command1) || !isdigit(command2)) return ' ';
   int ret1 = (int) charToInt(command1);
   int ret2 = (int) charToInt(command2);
   int floor =  (ret1*10) + ret2;
-  if (floor < 0 ) return ' '; //skip if floor not found
+  if (floor < 0 ) return ' ';
   char floors[] = "abcdefghijklmnop";
   if (floor >= 0 && floor <= 15) return floors[floor];
   return ' ';
 }
-//This method will check if the Elevator is at the requested floor and stop it
+
+//Verifica se o elevador chegou no andar desejado
 bool checkIfCanStopElevator(char elevator, char currentFloor, char targetFloor){
   if (targetFloor == currentFloor){
     moveOrStopElevator(elevator, STOP_MOVE);
@@ -225,7 +243,8 @@ bool checkIfCanStopElevator(char elevator, char currentFloor, char targetFloor){
   }
   return false;
 }
-//This Method will check if the commands are from new floor instructions and get corresponding letter
+
+//Verifica o próximo andar
 char checkFloor(char command1, char command2){
   if (command1 >= 48 && command1 <= 57){ // 0 - 9
     if (command2 >= 48 && command2 <= 57) // 0 - 9
@@ -235,7 +254,46 @@ char checkFloor(char command1, char command2){
   }
   return ' ';
 }
-//Thread from elevator 1
+
+void mainThread(ULONG msg){
+	
+  char bufferRequest[16];
+  int pos = 0;
+  char aux;
+  bool processed = false;
+  while (1) {
+    while (UARTCharsAvail(UART0_BASE)){
+      tx_thread_sleep(2);
+      aux = UARTCharGet(UART0_BASE);
+      if (aux != '\n' && aux != '\r'){
+        bufferRequest[pos] = aux;
+        pos++;
+        if (aux == 'F'){
+          memset(bufferRequest, 0, sizeof bufferRequest);
+          pos = 0;
+        }
+      }
+      else {
+        pos = 0;
+        processed = true;
+      }
+    }
+
+    if (processed){
+      if (bufferRequest[0] == ELEVATOR_TYPE_1)
+        if ((UINT) tx_queue_send(&queueElevator1, bufferRequest, TX_WAIT_FOREVER) != TX_SUCCESS) break;
+      if (bufferRequest[0] == ELEVATOR_TYPE_2)
+        if ((UINT) tx_queue_send(&queueElevator2, bufferRequest, TX_WAIT_FOREVER) != TX_SUCCESS) break;
+      if (bufferRequest[0] == ELEVATOR_TYPE_3)
+        if ((UINT) tx_queue_send(&queueElevator3, bufferRequest, TX_WAIT_FOREVER) != TX_SUCCESS) break;
+
+      memset(bufferRequest, 0, sizeof bufferRequest);
+      processed = false;
+    }
+  }
+}
+
+//Elevador esquerda
 void elevator1(ULONG elevator){
 	
   char elevator_type = ELEVATOR_TYPE_1;
@@ -252,32 +310,32 @@ void elevator1(ULONG elevator){
     memset(command, 0, sizeof command);
     if ((UINT) tx_queue_receive(&queueElevator1, command, TX_WAIT_FOREVER) != TX_SUCCESS) break;
 
-    //Attention, this case consider that the command[2] may not be numeric, so then uses only command[1] as floor indicator
+   
     char retFloor = checkFloor(command[1], command[2]);
     if(retFloor != ' ') floor = retFloor;
 
-    //Check if command internal or external
+    
     if (command[1] == EXTERNAL_SIGN || command[1] == INTERNAL_SIGN){
       if(command[1] == INTERNAL_SIGN) switchButton(elevator_type, command[2], true);
       buttonPressed = true;
       memset(lastCommand, 0, sizeof lastCommand);
       if ((UINT) tx_queue_send(&internalQueue1, command, TX_WAIT_FOREVER) != TX_SUCCESS) break;
     }
-    //====== Checking if button pressed =======
-    if (buttonPressed && strlen(lastCommand) == 0) //This means that a button was pressed, so will receive new command
+    
+    if (buttonPressed && strlen(lastCommand) == 0) 
       if ((UINT) tx_queue_receive(&internalQueue1, lastCommand, TX_WAIT_FOREVER) != TX_SUCCESS) break;
-    //====== Checking if command to new floor ====
-    if (lastCommand[1] == EXTERNAL_SIGN) //If new command is External
+    
+    if (lastCommand[1] == EXTERNAL_SIGN) 
       targetFloor = getFloor(lastCommand[2], lastCommand[3]);
     else if (lastCommand[1] == INTERNAL_SIGN)
       targetFloor = lastCommand[2];
-    //====== Making movements ======
-    if (targetFloor > floor && !inMovement) // Request to move up
+    
+    if (targetFloor > floor && !inMovement) 
       inMovement = moveOrStopElevator(elevator_type, MOVE_UP);
-    else if (targetFloor < floor && !inMovement) // Request to move down
+    else if (targetFloor < floor && !inMovement) 
       inMovement = moveOrStopElevator(elevator_type, MOVE_DOWN);
-    //====== Stopping if possible =======
-    if (strlen(lastCommand) != 0 && checkIfCanStopElevator(elevator_type, floor, targetFloor)){ //Request to stop move
+    
+    if (strlen(lastCommand) != 0 && checkIfCanStopElevator(elevator_type, floor, targetFloor)){ 
       switchButton(elevator_type, targetFloor, false);
       buttonPressed = false;
       inMovement = false;
@@ -285,7 +343,8 @@ void elevator1(ULONG elevator){
     }
   }
 }
-//Thread from elevator 2
+
+//Elevador central
 void elevator2(ULONG elevator){
 	
   char elevator_type = ELEVATOR_TYPE_2;
@@ -302,32 +361,32 @@ void elevator2(ULONG elevator){
     memset(command, 0, sizeof command);
     if ((UINT) tx_queue_receive(&queueElevator2, command, TX_WAIT_FOREVER) != TX_SUCCESS) break;
 
-    //Attention, this case consider that the command[2] may not be numeric, so then uses only command[1] as floor indicator
+    
     char retFloor = checkFloor(command[1], command[2]);
     if(retFloor != ' ') floor = retFloor;
 
-    //Check if command internal or external
+    
     if (command[1] == EXTERNAL_SIGN || command[1] == INTERNAL_SIGN){
       if(command[1] == INTERNAL_SIGN) switchButton(elevator_type, command[2], true);
       buttonPressed = true;
       memset(lastCommand, 0, sizeof lastCommand);
       if ((UINT) tx_queue_send(&internalQueue2, command, TX_WAIT_FOREVER) != TX_SUCCESS) break;
     }
-    //====== Checking if button pressed =======
-    if (buttonPressed && strlen(lastCommand) == 0) //This means that a button was pressed, so will receive new command
+    
+    if (buttonPressed && strlen(lastCommand) == 0) 
       if ((UINT) tx_queue_receive(&internalQueue2, lastCommand, TX_WAIT_FOREVER) != TX_SUCCESS) break;
-    //====== Checking if command to new floor ====
-    if (lastCommand[1] == EXTERNAL_SIGN) //If new command is External
+    
+    if (lastCommand[1] == EXTERNAL_SIGN) 
       targetFloor = getFloor(lastCommand[2], lastCommand[3]);
     else if (lastCommand[1] == INTERNAL_SIGN)
       targetFloor = lastCommand[2];
-    //====== Making movements ======
-    if (targetFloor > floor && !inMovement) // Request to move up
+    
+    if (targetFloor > floor && !inMovement) 
       inMovement = moveOrStopElevator(elevator_type, MOVE_UP);
-    else if (targetFloor < floor && !inMovement) // Request to move down
+    else if (targetFloor < floor && !inMovement) 
       inMovement = moveOrStopElevator(elevator_type, MOVE_DOWN);
-    //====== Stopping if possible =======
-    if (strlen(lastCommand) != 0 && checkIfCanStopElevator(elevator_type, floor, targetFloor)){ //Request to stop move
+    
+    if (strlen(lastCommand) != 0 && checkIfCanStopElevator(elevator_type, floor, targetFloor)){ 
       switchButton(elevator_type, targetFloor, false);
       buttonPressed = false;
       inMovement = false;
@@ -335,7 +394,8 @@ void elevator2(ULONG elevator){
     }
   }
 }
-//Thread from elevator 3
+
+//Elevador direita
 void elevator3(ULONG elevator){
   char elevator_type = ELEVATOR_TYPE_3;
   char floor = 'a';
@@ -351,32 +411,32 @@ void elevator3(ULONG elevator){
     memset(command, 0, sizeof command);
     if ((UINT) tx_queue_receive(&queueElevator3, command, TX_WAIT_FOREVER) != TX_SUCCESS) break;
 
-    //Attention, this case consider that the command[2] may not be numeric, so then uses only command[1] as floor indicator
+    
     char retFloor = checkFloor(command[1], command[2]);
     if(retFloor != ' ') floor = retFloor;
 
-    //Check if command internal or external
+    
     if (command[1] == EXTERNAL_SIGN || command[1] == INTERNAL_SIGN){
       if(command[1] == INTERNAL_SIGN) switchButton(elevator_type, command[2], true);
       buttonPressed = true;
       memset(lastCommand, 0, sizeof lastCommand);
       if ((UINT) tx_queue_send(&internalQueue3, command, TX_WAIT_FOREVER) != TX_SUCCESS) break;
     }
-    //====== Checking if button pressed =======
-    if (buttonPressed && strlen(lastCommand) == 0) //This means that a button was pressed, so will receive new command
+    
+    if (buttonPressed && strlen(lastCommand) == 0) 
       if ((UINT) tx_queue_receive(&internalQueue3, lastCommand, TX_WAIT_FOREVER) != TX_SUCCESS) break;
-    //====== Checking if command to new floor ====
-    if (lastCommand[1] == EXTERNAL_SIGN) //If new command is External
+    
+    if (lastCommand[1] == EXTERNAL_SIGN)
       targetFloor = getFloor(lastCommand[2], lastCommand[3]);
     else if (lastCommand[1] == INTERNAL_SIGN)
       targetFloor = lastCommand[2];
-    //====== Making movements ======
-    if (targetFloor > floor && !inMovement) // Request to move up
+    
+    if (targetFloor > floor && !inMovement) 
       inMovement = moveOrStopElevator(elevator_type, MOVE_UP);
-    else if (targetFloor < floor && !inMovement) // Request to move down
+    else if (targetFloor < floor && !inMovement) 
       inMovement = moveOrStopElevator(elevator_type, MOVE_DOWN);
-    //====== Stopping if possible =======
-    if (strlen(lastCommand) != 0 && checkIfCanStopElevator(elevator_type, floor, targetFloor)){ //Request to stop move
+    
+    if (strlen(lastCommand) != 0 && checkIfCanStopElevator(elevator_type, floor, targetFloor)){
       switchButton(elevator_type, targetFloor, false);
       buttonPressed = false;
       inMovement = false;
@@ -384,46 +444,8 @@ void elevator3(ULONG elevator){
     }
   }
 }
-//Main thread that will treat all the 
-void mainThread(ULONG msg){
-	
-  char bufferRequest[16];
-  int pos = 0;
-  char aux;
-  bool processed = false;
-  while (1) {
-    while (UARTCharsAvail(UART0_BASE)){
-      tx_thread_sleep(2);
-      aux = UARTCharGet(UART0_BASE);
-      if (aux != '\n' && aux != '\r'){
-        bufferRequest[pos] = aux;
-        pos++;
-        if (aux == 'F'){  //Doors closed
-          memset(bufferRequest, 0, sizeof bufferRequest);
-          pos = 0;
-        }
-      }
-      else {
-        pos = 0;
-        processed = true;
-      }
-    }
 
-    if (processed){
-     // printf("Processed=>%s\n", bufferRequest);
-      if (bufferRequest[0] == ELEVATOR_TYPE_1)
-        if ((UINT) tx_queue_send(&queueElevator1, bufferRequest, TX_WAIT_FOREVER) != TX_SUCCESS) break;
-      if (bufferRequest[0] == ELEVATOR_TYPE_2)
-        if ((UINT) tx_queue_send(&queueElevator2, bufferRequest, TX_WAIT_FOREVER) != TX_SUCCESS) break;
-      if (bufferRequest[0] == ELEVATOR_TYPE_3)
-        if ((UINT) tx_queue_send(&queueElevator3, bufferRequest, TX_WAIT_FOREVER) != TX_SUCCESS) break;
 
-      memset(bufferRequest, 0, sizeof bufferRequest);
-      processed = false;
-    }
-  }
-}
-//System threads definition
 void tx_application_define(void *first_unused_memory){
   CHAR *pointer;
 
