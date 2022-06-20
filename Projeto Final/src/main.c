@@ -1,574 +1,472 @@
-#include <stdbool.h>
 #include <stdio.h>
 #include <stdint.h>
+#include <stdbool.h>
+#include <string.h>
+#include <stdbool.h>
 #include <inttypes.h>
-#include "inc/hw_memmap.h"
-#include "driverlib/gpio.h"
-#include "driverlib/uart.h"
-#include "driverlib/sysctl.h"
-#include "driverlib/pin_map.h"
+#include <ctype.h>
 #include "utils/uartstdio.h"
 #include "tx_api.h"
-#include "tx_port.h"
-#include <string.h>
-#include "driverlib/interrupt.h"
-#include "driverlib/systick.h"
 #include "system_TM4C1294.h"
+#include "driverlib/systick.h"
+#include "driverlib/sysctl.h"
+#include "driverlib/gpio.h"
+#include "driverlib/pin_map.h"
+#include "driverlib/interrupt.h"
+#include "driverlib/uart.h"
+#include "inc/hw_memmap.h"
 
+#define GPIO_PA1_U0TX 0x00000401
+#define GPIO_PA0_U0RX 0x00000001
 
-#define GPIO_PA1_U0TX           0x00000401
-#define GPIO_PA0_U0RX           0x00000001
+#define BaudRate 115200
+#define BUFFER_SIZE 16
 
-#define DEMO_BYTE_POOL_SIZE     9120
-#define DEMO_STACK_SIZE         1024
-#define DEMO_QUEUE_SIZE         100
+#define ELEVATOR_BLOCK_POOL_SIZE 100
+#define ELEVATOR_BYTE_POOL_SIZE 9120
+#define ELEVATOR_QUEUE_SIZE 100
+#define ELEVATOR_STACK_SIZE 1024
 
-TX_THREAD thread_controll;
-TX_THREAD thread1;
-TX_THREAD thread2;
-TX_THREAD thread3;
-TX_BYTE_POOL byte_pool;
+#define ELEVATOR_TYPE_1 'e'
+#define ELEVATOR_TYPE_2 'c'
+#define ELEVATOR_TYPE_3 'd'
+
+#define INTERNAL_SIGN 'I'
+#define EXTERNAL_SIGN 'E'
+
+#define MOVE_UP 1
+#define MOVE_DOWN -1
+#define STOP_MOVE 0
+
+uint8_t BufferPos;
+uint8_t LastPos;
+uint8_t buffer[BUFFER_SIZE];
+
+TX_THREAD threadMain;
+TX_THREAD threadElevator1;
+TX_THREAD threadElevator2;
+TX_THREAD threadElevator3;
+TX_QUEUE queueElevator1;
+TX_QUEUE internalQueue1;
+TX_QUEUE queueElevator2;
+TX_QUEUE internalQueue2;
+TX_QUEUE queueElevator3;
+TX_QUEUE internalQueue3;
 TX_MUTEX mutex;
-TX_QUEUE esquerda_uart;
-TX_QUEUE centro_uart;
-TX_QUEUE direita_uart;
-TX_QUEUE esquerda_interna;
-TX_QUEUE centro_interna;
-TX_QUEUE direita_interna;
-
-UCHAR byte_pool_memory[DEMO_BYTE_POOL_SIZE];
-
-UINT status_mutex;
-
-
-void UARTInit(void)
-{
-  // Enable UART0
+TX_BYTE_POOL bytePool;
+TX_BLOCK_POOL block_pool_0;
+UCHAR bytePoolMemory[ELEVATOR_BYTE_POOL_SIZE];
+//This will initialize the microcontroller
+void UARTInit(void){
+  //Initialize peripherals
   SysCtlPeripheralEnable(SYSCTL_PERIPH_UART0);
-  while(!SysCtlPeripheralReady(SYSCTL_PERIPH_UART0));
-  
-  // Initialize the UART for console I/O.  
-  UARTConfigSetExpClk(UART0_BASE,SystemCoreClock,(uint32_t)115200,(UART_CONFIG_WLEN_8|UART_CONFIG_STOP_ONE|UART_CONFIG_PAR_NONE));
-  UARTFIFOEnable(UART0_BASE);
-  
-  // Enable the GPIO Peripheral used by the UART.  
   SysCtlPeripheralEnable(SYSCTL_PERIPH_GPIOA);
-  while(!SysCtlPeripheralReady(SYSCTL_PERIPH_GPIOA));
-  
- 
-  // Configure GPIO Pins for UART mode.  
-  GPIOPinConfigure(GPIO_PA0_U0RX);
+  while (!SysCtlPeripheralReady(SYSCTL_PERIPH_UART0));
+  //Config GPIO
   GPIOPinConfigure(GPIO_PA1_U0TX);
+  GPIOPinConfigure(GPIO_PA0_U0RX);
   GPIOPinTypeUART(GPIO_PORTA_BASE,(GPIO_PIN_0|GPIO_PIN_1));
+  //Config UART
+  UARTConfigSetExpClk(UART0_BASE,SystemCoreClock,(uint32_t)BaudRate,(UART_CONFIG_WLEN_8| UART_CONFIG_STOP_ONE|UART_CONFIG_PAR_NONE));
+  UARTFIFOEnable(UART0_BASE);
+  //Buffer
+  BufferPos = 0;
+  LastPos = 0;
 }
-
-int main(void)
-{
-  IntMasterEnable(); 
-  SysTickPeriodSet(2500000);  
+//Main function
+int main(){
+  IntMasterEnable();
+  SysTickPeriodSet(2500000);
   SysTickIntEnable();
   SysTickEnable();
   UARTInit();
-
-  tx_kernel_enter(); //inicializa o ThreadX e inicia o escalonador de tarefas
+  tx_kernel_enter();
 }
-
-
-void inicializacao(char elevador)
-{
-	
-        status_mutex = tx_mutex_get(&mutex, TX_WAIT_FOREVER); //TX_WAIT_FOREVER faz com que o thread de chamada seja suspenso indefinidamente até que um bloco de memória esteja disponível.
-	if(status_mutex != TX_SUCCESS) //TX_SUCCESS bloco de memória bem-sucedida
-		return;
-	
-	UARTCharPut(UART0_BASE, elevador);
-  	UARTCharPut(UART0_BASE, 'r');
-  	UARTCharPut(UART0_BASE, '\n');
-  	UARTCharPut(UART0_BASE, '\r');
-	
-  	tx_thread_sleep(5);
-	
-  	UARTCharPut(UART0_BASE, elevador);
-  	UARTCharPut(UART0_BASE, 'f');
-  	UARTCharPut(UART0_BASE, '\n');
-  	UARTCharPut(UART0_BASE, '\r');
-  	  
-  	status_mutex = tx_mutex_put(&mutex);
-  	
-  	if (status_mutex != TX_SUCCESS)
-		return;
+//Mutex get function
+bool sendGetMutexAndcheckStatus(){
+  return ((UINT) tx_mutex_get(&mutex, TX_WAIT_FOREVER)) == TX_SUCCESS;
 }
-
-void Led_On_Off(char elevador, char andar, int On)
-{
-	status_mutex = tx_mutex_get(&mutex, TX_WAIT_FOREVER);
-	if (status_mutex != TX_SUCCESS)
-		return;
-	
-	UARTCharPut(UART0_BASE, elevador);
-	if(On == 1)
-		UARTCharPut(UART0_BASE, 'L');
-	else
-		UARTCharPut(UART0_BASE, 'D');
-		UARTCharPut(UART0_BASE, andar);
-		UARTCharPut(UART0_BASE, '\r');
-	
-	status_mutex = tx_mutex_put(&mutex);
-	
-	if (status_mutex != TX_SUCCESS)
-		return;
+//Mutex put function
+bool sendPutMutexAndcheckStatus(){
+  return ((UINT) tx_mutex_put(&mutex)) == TX_SUCCESS;
 }
- 
-void Portas(char elevador)
-{
-	status_mutex = tx_mutex_get(&mutex, TX_WAIT_FOREVER);
-	if (status_mutex != TX_SUCCESS)
-		return;
-
-	UARTCharPut(UART0_BASE, elevador);
-	UARTCharPut(UART0_BASE, 'a');
-	UARTCharPut(UART0_BASE, '\n');
-	UARTCharPut(UART0_BASE, '\r');
-
-	status_mutex = tx_mutex_put(&mutex);
-	if (status_mutex != TX_SUCCESS)
-		return;
-	
-	tx_thread_sleep(1000);
-	
-	status_mutex = tx_mutex_get(&mutex, TX_WAIT_FOREVER);
-	if (status_mutex != TX_SUCCESS)
-		return;
-	
-	UARTCharPut(UART0_BASE, elevador);
-	UARTCharPut(UART0_BASE, 'f');
-	UARTCharPut(UART0_BASE, '\n');
-	UARTCharPut(UART0_BASE, '\r');
-	
-	status_mutex = tx_mutex_put(&mutex);
-	if (status_mutex != TX_SUCCESS)
-		return;
-}
-
-void movimentacao_elevador(char elevador, int status_movimentacao)
-{
-	status_mutex = tx_mutex_get(&mutex, TX_WAIT_FOREVER);
-
-	if (status_mutex != TX_SUCCESS)
-		return;
-	
-	if (status_movimentacao == 1)
-	{
-		UARTCharPut(UART0_BASE, elevador);
-		UARTCharPut(UART0_BASE, 's');
-		UARTCharPut(UART0_BASE, '\n');
-		UARTCharPut(UART0_BASE, '\r');
-	}
-	else if (status_movimentacao == -1)
-	{
-		UARTCharPut(UART0_BASE, elevador);
-		UARTCharPut(UART0_BASE, 'd');
-		UARTCharPut(UART0_BASE, '\n');
-		UARTCharPut(UART0_BASE, '\r');
-	}
-	else
-	{
-		UARTCharPut(UART0_BASE, elevador);
-		UARTCharPut(UART0_BASE, 'p');
-		UARTCharPut(UART0_BASE, '\n');
-		UARTCharPut(UART0_BASE, '\r');
-	}
-	
-	status_mutex = tx_mutex_put(&mutex);
-	
-	if (status_mutex != TX_SUCCESS)
-		return;
-}   
-
-char qual_andar(char andar_dezena, char andar_unidade)
-{
-  	int andar = (andar_dezena - '0') * 10 + (andar_unidade - '0');
-  	
-	switch (andar)
-    {
-        case 0:
-            return 'a';
-        case 1:
-            return 'b';
-        case 2:
-            return 'c';
-        case 3:
-            return 'd';
-        case 4:
-            return 'e';
-        case 5:
-            return 'f';
-        case 6:
-            return 'g';
-        case 7:
-            return 'h';
-        case 8:
-            return 'i';
-        case 9:
-            return 'j';
-        case 10:
-            return 'k';
-        case 11:
-            return 'l';
-        case 12:
-            return 'm';
-        case 13:
-            return 'n';
-        case 14:
-            return 'o';
-        case 15:
-            return 'p';
-        default:
-            return ' ';
-    }
-}
-
-void ControladoraThread(ULONG msg)
-{
-  char chamada[16];  
-  char aux_char;
-  int iterador = 0;
-  int posicaoEntrada = -1;
-  
-  UINT status;
-  
-  while (1)
-  {
-    while (UARTCharsAvail(UART0_BASE))
-    {
-      //tx_thread_sleep(2);
-      //Guarda o char recebido
-      aux_char = UARTCharGet(UART0_BASE);  
-      if (aux_char != '\n' && aux_char != '\r')
-       {
-        chamada[iterador] = aux_char;
-        iterador++;
-	//Caso seja F ou A ignora e limpa o vetor
-        if (aux_char == 'F' || aux_char == 'A')
-        {
-          memset(chamada, 0, sizeof chamada);
-          iterador = 0;
-        }
-      }
-      else
-        {
-        iterador = 0;
-        posicaoEntrada = 1;
-        }
-		
-	tx_thread_sleep(2);
-
-    }
-
-    if (posicaoEntrada)
-    {
-      if (chamada[iterador] == 'e')
-      {
-        status = tx_queue_send(&esquerda_uart, chamada, TX_WAIT_FOREVER);
-        if (status != TX_SUCCESS)
-          break;
-        status = tx_queue_send(&esquerda_interna, chamada, TX_WAIT_FOREVER);
-        if (status != TX_SUCCESS)
-          break;
-      }
-      if (chamada[iterador] == 'c')
-      {
-        status = tx_queue_send(&centro_uart, chamada, TX_WAIT_FOREVER);
-        if (status != TX_SUCCESS)
-          break;
-        status = tx_queue_send(&centro_interna, chamada, TX_WAIT_FOREVER);
-        if (status != TX_SUCCESS)
-          break;
-      }
-      if (chamada[iterador] == 'd')
-      {
-        status = tx_queue_send(&direita_uart, chamada, TX_WAIT_FOREVER);
-        if (status != TX_SUCCESS)
-          break;
-        status = tx_queue_send(&direita_interna, chamada, TX_WAIT_FOREVER);
-        if (status != TX_SUCCESS)
-          break;        
-      }
-      memset(chamada, 0, sizeof chamada);
-    }
-	tx_thread_sleep(2);
+//This method will be invoked to send end line commands
+void commandFinalizer(bool finalizer){
+  if (finalizer){
+    UARTCharPut(UART0_BASE, '\n');
+    UARTCharPut(UART0_BASE, '\r');
   }
 }
-
-void elevador_esq(ULONG elevador)
-{
-	char andar = 'a';
-	char novoAndar = 'a';
-	char posicao[16];
-	char posicaoAtual[16];
-	char aux[16];
-	int movendo = -1;
-	int tamanho = 0;
-    
-	
-	UINT status;
-	
-	inicializacao('e');
-	
-	while (1)
-	{
-	  //limpa e armazena o comando recebido da fila
-	  status = tx_queue_receive(&esquerda_uart, posicao, TX_WAIT_FOREVER);
-	  if (status != TX_SUCCESS)
-	    break;
-		
-	  //verifica a posição atual do elevador
-	  if (posicao[1] >= 48 && posicao[1] <= 57)
-	  {
-	    if (posicao[2] >= 48 && posicao[2] <= 57)
-	    {
-	      andar = qual_andar(posicao[1], posicao[2]);
-	    }
-	    else
-	    {
-	      andar = qual_andar('0', posicao[1]);
-	    }
-	  }
-	  
-	  if (posicao[1] == 'E' || posicao[1] == 'I')
-	  {
-	    if(posicao[1] == 'I')
-	    Led_On_Off('e', posicao[2], 1);
-	    tamanho++;
-	  }
-	  if (tamanho > 0 && strlen(posicaoAtual) == 0)
-	  {
-	    status = tx_queue_receive(&esquerda_interna, posicaoAtual, TX_WAIT_FOREVER);
-	    if (status != TX_SUCCESS)
-	      break;
-	  }
-	  if (posicaoAtual[1] == 'E')
-	  {
-	    novoAndar = qual_andar(posicaoAtual[2], posicaoAtual[3]);
-	  }
-	  else if (posicaoAtual[1] == 'I')
-	  {
-            novoAndar = posicaoAtual[2];
-	  }
-	  if (novoAndar > andar && movendo == -1)
-	  {
-	    movimentacao_elevador('e', 1);
-	    movendo = 1;
-	  }
-	  else if (novoAndar < andar && movendo == -1)
-	  {
-	    movimentacao_elevador('e', -1);
-	    movendo = 1;
-	  }
-	  if (novoAndar == andar)
-	  {
-	    movimentacao_elevador('e', 0);
-	    Portas('e');
-	    Led_On_Off('e', novoAndar, 0);
-	    tamanho--;
-            memset(posicao, 0, sizeof posicao);
-	    memset(posicaoAtual, 0, sizeof posicaoAtual);
-            movendo = -1;
-	  }
-	}
-        
+//This method will be invoked to send single command
+void sendCommand(char comm, bool finalizer){
+  UARTCharPut(UART0_BASE, comm);
+  commandFinalizer(finalizer);
 }
-
-void elevador_cen(ULONG elevador)
-{
-	char andar = 'a';
-	char novoAndar = 'a';
-	char posicao[16];
-	char posicaoAtual[16];
-	char aux[16];
-	int movendo = -1;
-	int tamanho = 0;
-    
-    
-	
-	UINT status;
-	
-	inicializacao('c');
-	
-	while (1)
-	{
-	  //limpa e armazena o comando recebido da fila
-	  status = tx_queue_receive(&centro_uart, posicao, TX_WAIT_FOREVER);
-	  if (status != TX_SUCCESS)
-	    break;
-          
-	  //verifica a posição atual do elevador
-	  if (posicao[1] >= 48 && posicao[1] <= 57)
-	  {
-	    if (posicao[2] >= 48 && posicao[2] <= 57)
-	    {
-	      andar = qual_andar(posicao[1], posicao[2]);
-	    }
-	    else
-	    {
-	      andar = qual_andar('0', posicao[1]);
-	    }
-	  }
-	  if (posicao[1] == 'E' || posicao[1] == 'I')
-	  {
-	    if(posicao[1] == 'I')
-	    Led_On_Off('c', posicao[2], 1);
-	    tamanho++;
-	  }
-	  if (tamanho > 0 && strlen(posicaoAtual) == 0)
-	  {
-	    status = tx_queue_receive(&centro_interna, posicaoAtual, TX_WAIT_FOREVER);
-	    if (status != TX_SUCCESS)
-	      break;
-	  }
-	  if (posicaoAtual[1] == 'E')
-	  {
-	    novoAndar = qual_andar(posicaoAtual[2], posicaoAtual[3]);
-	  }
-	  else if (posicaoAtual[1] == 'I')
-	  {
-	    novoAndar = posicaoAtual[2];
-	  }
-	  if (novoAndar > andar && movendo == -1)
-	  {
-	    movimentacao_elevador('c', 1);
-	    movendo = 1;
-	  }
-	  else if (novoAndar < andar && movendo == -1)
-	  {
-	    movimentacao_elevador('c', -1);
-	    movendo = 1;
-	  }
-	  if (novoAndar == andar)
-	  {
-	    movimentacao_elevador('c', 0);
-	    Portas('c');
-	    Led_On_Off('c', novoAndar, 0);
-	    tamanho--;
-            memset(posicao, 0, sizeof posicao);
-	    memset(posicaoAtual, 0, sizeof posicaoAtual);
-	    movendo = -1;
-	  }
-	}
+//This method will be invoked to send multiple commands into single line
+void sendSingleCommand(char elevator, char comm, bool finalizer){
+  sendCommand(elevator, false);
+  sendCommand(comm, false);
+  commandFinalizer(finalizer);
 }
+//This method will check the led status
+void ledStatus(char elevator, char floor, int turnon){
+  UINT status = tx_mutex_get(&mutex, TX_WAIT_FOREVER);
+  if (status != TX_SUCCESS)
+    return;
 
-void elevador_dir(ULONG elevador)
-{
-	char andar = 'a';
-	char novoAndar = 'a';
-	char posicao[16];
-	char posicaoAtual[16];
-	char aux[16];
-	int movendo = -1;
-	int tamanho = 0;
-    
-    
-	
-	UINT status;
-	
-	inicializacao('d');
-	
-	while (1)
-	{
-	  //limpa e armazena o comando recebido da fila
-	  status = tx_queue_receive(&direita_uart, posicao, TX_WAIT_FOREVER);
-	  if (status != TX_SUCCESS)
-	    break;
-	
-          //verifica a posição atual do elevador
-	  if (posicao[1] >= 48 && posicao[1] <= 57)
-	  {
-	    if (posicao[2] >= 48 && posicao[2] <= 57)
-	    {
-	      andar = qual_andar(posicao[1], posicao[2]);
-	    }
-	    else
-	    {
-	      andar = qual_andar('0', posicao[1]);
-	    }
-	  }
-	  if (posicao[1] == 'E' || posicao[1] == 'I')
-	  {
-	    if(posicao[1] == 'I')
-	    Led_On_Off('d', posicao[2], 1);
-	    tamanho++;
-	  }
-	  if (tamanho > 0 && strlen(posicaoAtual) == 0)
-	  {
-	    status = tx_queue_receive(&direita_interna, posicaoAtual, TX_WAIT_FOREVER);
-	    if (status != TX_SUCCESS)
-	      break;
-	  }
-	  if (posicaoAtual[1] == 'E')
-	  {
-	    novoAndar = qual_andar(posicaoAtual[2], posicaoAtual[3]);
-	  }
-	  else if (posicaoAtual[1] == 'I')
-	  {
-	    novoAndar = posicaoAtual[2];
-	  }
-	  if (novoAndar > andar && movendo == -1)
-	  {
-	    movimentacao_elevador('d', 1);
-	    movendo = 1;
-	  }
-	  else if (novoAndar < andar && movendo == -1)
-	  {
-	    movimentacao_elevador('d', -1);
-	    movendo = 1;
-	  }
-	  if (novoAndar == andar && strlen(posicaoAtual) != 0)
-	  {
-	    movimentacao_elevador('d', 0);
-	    Portas('d');
-	    Led_On_Off('d', novoAndar, 0);
-	    tamanho--;
-            memset(posicao, 0, sizeof posicao);
-	    memset(posicaoAtual, 0, sizeof posicaoAtual);
-	    movendo = -1;
-	  }
-	}
+  UARTCharPut(UART0_BASE, elevator);
+  if(turnon == 1)
+    UARTCharPut(UART0_BASE, 'L');
+  else
+    UARTCharPut(UART0_BASE, 'D');
+	UARTCharPut(UART0_BASE, floor);
+	UARTCharPut(UART0_BASE, '\r');
+
+  status = tx_mutex_put(&mutex);
+
+  if (status != TX_SUCCESS)
+    return;
 }
-
-void tx_application_define(void *first_unused_memory)
-{
-    CHAR    *pointer = TX_NULL;
+//This methos will turn on and off a button
+void switchButton(char elevator, char floor, bool turnon){
+  if (!sendGetMutexAndcheckStatus()) return;
+  sendSingleCommand(elevator, (turnon) ? 'L' : 'D', false);
+  sendCommand(floor, false);
+  sendCommand('\r', false);
+  if (!sendPutMutexAndcheckStatus()) return;
+}
+//This method will turn off all buttons for a given elevator
+void turnOffAllButtons(char elevator){
+  char floors[] = "abcdefghijklmnop";
+  for (int i=0; i<strlen(floors); i++){
+    switchButton(elevator, floors[i], false);
+    tx_thread_sleep(2); // to avoid overload commands
+  }
+}
+//This method will initialize the elevator
+void initElevator(char elevator){
+  if (!sendGetMutexAndcheckStatus()) return;
+  sendSingleCommand(elevator, 'r', false);
+  sendCommand('\r', false);
+  if (!sendPutMutexAndcheckStatus()) return;
+  if (!sendGetMutexAndcheckStatus()) return;
+  sendSingleCommand(elevator, 'f', true);
+  if (!sendPutMutexAndcheckStatus()) return;
+  turnOffAllButtons(elevator);
+}
+//This method will close and open the doors
+void doorStatus(char elevator){
+  if (!sendGetMutexAndcheckStatus()) return;
+  sendSingleCommand(elevator, 'a', true);
+  if (!sendPutMutexAndcheckStatus()) return;
+  tx_thread_sleep(1000);
+  if (!sendGetMutexAndcheckStatus()) return;
+  sendSingleCommand(elevator, 'f', true);
+  if (!sendPutMutexAndcheckStatus()) return;
+}
+//This method will move up or down the elevator
+bool moveOrStopElevator(char elevator, int movement){
+  bool ret = true;
+  if (!sendGetMutexAndcheckStatus()) return false;
+  if (movement == MOVE_UP)
+    sendSingleCommand(elevator, 's', true);
+  else if (movement == MOVE_DOWN)
+    sendSingleCommand(elevator, 'd', true);
+  else { // STOP_MOVE
+    sendSingleCommand(elevator, 'p', true);
+    ret = false;
+  }
+  if (!sendPutMutexAndcheckStatus()) return false;
+  return ret;
+}
+//This method is used to convert Char to String
+char * convertCharToString(char c){
+    char str1[2] = {c , '\0'};
+    char *str = malloc(5);
+    strcpy(str,str1);
+    return str;
+}
+//This method is used find the index of a given char into a string
+int indexOf(char * src, char search){
+    char * found = strstr( src, convertCharToString(search) );
+    int index = -1;
+    if (found != NULL)
+      index = found - src;
+	return index;
+}
+//This method is used to convert char to Int
+int charToInt(char value){
+    if (isdigit(value)){
+        char numbersChar[] = "0123456789";
+        int numbers[] = {0,1,2,3,4,5,6,7,8,9};
+        int pos = indexOf(numbersChar, value); 
+        if (pos >= 0) return numbers[pos];
+    }
+    return -1;
+}
+//This method will return the corresponding letter to the given numeric floor
+char getFloor(char command1, char command2){
+  if (!isdigit(command1) || !isdigit(command2)) return ' '; //skip if not numeric
+  int ret1 = (int) charToInt(command1);
+  int ret2 = (int) charToInt(command2);
+  int floor =  (ret1*10) + ret2;
+  if (floor < 0 ) return ' '; //skip if floor not found
+  char floors[] = "abcdefghijklmnop";
+  if (floor >= 0 && floor <= 15) return floors[floor];
+  return ' ';
+}
+//This method will check if the Elevator is at the requested floor and stop it
+bool checkIfCanStopElevator(char elevator, char currentFloor, char targetFloor){
+  if (targetFloor == currentFloor){
+    moveOrStopElevator(elevator, STOP_MOVE);
+    doorStatus(elevator);
+    switchButton(elevator, targetFloor, false);
+    return true;
+  }
+  return false;
+}
+//This Method will check if the commands are from new floor instructions and get corresponding letter
+char checkFloor(char command1, char command2){
+  if (command1 >= 48 && command1 <= 57){ // 0 - 9
+    if (command2 >= 48 && command2 <= 57) // 0 - 9
+      return getFloor(command1, command2);
+    else
+      return getFloor('0', command1);
+  }
+  return ' ';
+}
+//Thread from elevator 1
+void elevator1(ULONG elevator){
 	
+  char elevator_type = ELEVATOR_TYPE_1;
+  char floor = 'a';
+  char targetFloor = 'a';
+  char command[16];
+  char lastCommand[16];
+  bool inMovement = false;
+  bool buttonPressed = false;
+  
+  initElevator(elevator_type);
+
+  while (1){
+    memset(command, 0, sizeof command);
+    if ((UINT) tx_queue_receive(&queueElevator1, command, TX_WAIT_FOREVER) != TX_SUCCESS) break;
+
+    //Attention, this case consider that the command[2] may not be numeric, so then uses only command[1] as floor indicator
+    char retFloor = checkFloor(command[1], command[2]);
+    if(retFloor != ' ') floor = retFloor;
+
+    //Check if command internal or external
+    if (command[1] == EXTERNAL_SIGN || command[1] == INTERNAL_SIGN){
+      if(command[1] == INTERNAL_SIGN) switchButton(elevator_type, command[2], true);
+      buttonPressed = true;
+      memset(lastCommand, 0, sizeof lastCommand);
+      if ((UINT) tx_queue_send(&internalQueue1, command, TX_WAIT_FOREVER) != TX_SUCCESS) break;
+    }
+    //====== Checking if button pressed =======
+    if (buttonPressed && strlen(lastCommand) == 0) //This means that a button was pressed, so will receive new command
+      if ((UINT) tx_queue_receive(&internalQueue1, lastCommand, TX_WAIT_FOREVER) != TX_SUCCESS) break;
+    //====== Checking if command to new floor ====
+    if (lastCommand[1] == EXTERNAL_SIGN) //If new command is External
+      targetFloor = getFloor(lastCommand[2], lastCommand[3]);
+    else if (lastCommand[1] == INTERNAL_SIGN)
+      targetFloor = lastCommand[2];
+    //====== Making movements ======
+    if (targetFloor > floor && !inMovement) // Request to move up
+      inMovement = moveOrStopElevator(elevator_type, MOVE_UP);
+    else if (targetFloor < floor && !inMovement) // Request to move down
+      inMovement = moveOrStopElevator(elevator_type, MOVE_DOWN);
+    //====== Stopping if possible =======
+    if (strlen(lastCommand) != 0 && checkIfCanStopElevator(elevator_type, floor, targetFloor)){ //Request to stop move
+      switchButton(elevator_type, targetFloor, false);
+      buttonPressed = false;
+      inMovement = false;
+      memset(lastCommand, 0, sizeof lastCommand);
+    }
+  }
+}
+//Thread from elevator 2
+void elevator2(ULONG elevator){
+	
+  char elevator_type = ELEVATOR_TYPE_2;
+  char floor = 'a';
+  char targetFloor = 'a';
+  char command[16];
+  char lastCommand[16];
+  bool inMovement = false;
+  bool buttonPressed = false;
+  
+  initElevator(elevator_type);
+
+  while (1){
+    memset(command, 0, sizeof command);
+    if ((UINT) tx_queue_receive(&queueElevator2, command, TX_WAIT_FOREVER) != TX_SUCCESS) break;
+
+    //Attention, this case consider that the command[2] may not be numeric, so then uses only command[1] as floor indicator
+    char retFloor = checkFloor(command[1], command[2]);
+    if(retFloor != ' ') floor = retFloor;
+
+    //Check if command internal or external
+    if (command[1] == EXTERNAL_SIGN || command[1] == INTERNAL_SIGN){
+      if(command[1] == INTERNAL_SIGN) switchButton(elevator_type, command[2], true);
+      buttonPressed = true;
+      memset(lastCommand, 0, sizeof lastCommand);
+      if ((UINT) tx_queue_send(&internalQueue2, command, TX_WAIT_FOREVER) != TX_SUCCESS) break;
+    }
+    //====== Checking if button pressed =======
+    if (buttonPressed && strlen(lastCommand) == 0) //This means that a button was pressed, so will receive new command
+      if ((UINT) tx_queue_receive(&internalQueue2, lastCommand, TX_WAIT_FOREVER) != TX_SUCCESS) break;
+    //====== Checking if command to new floor ====
+    if (lastCommand[1] == EXTERNAL_SIGN) //If new command is External
+      targetFloor = getFloor(lastCommand[2], lastCommand[3]);
+    else if (lastCommand[1] == INTERNAL_SIGN)
+      targetFloor = lastCommand[2];
+    //====== Making movements ======
+    if (targetFloor > floor && !inMovement) // Request to move up
+      inMovement = moveOrStopElevator(elevator_type, MOVE_UP);
+    else if (targetFloor < floor && !inMovement) // Request to move down
+      inMovement = moveOrStopElevator(elevator_type, MOVE_DOWN);
+    //====== Stopping if possible =======
+    if (strlen(lastCommand) != 0 && checkIfCanStopElevator(elevator_type, floor, targetFloor)){ //Request to stop move
+      switchButton(elevator_type, targetFloor, false);
+      buttonPressed = false;
+      inMovement = false;
+      memset(lastCommand, 0, sizeof lastCommand);
+    }
+  }
+}
+//Thread from elevator 3
+void elevator3(ULONG elevator){
+  char elevator_type = ELEVATOR_TYPE_3;
+  char floor = 'a';
+  char targetFloor = 'a';
+  char command[16];
+  char lastCommand[16];
+  bool inMovement = false;
+  bool buttonPressed = false;
+  
+  initElevator(elevator_type);
+
+  while (1){
+    memset(command, 0, sizeof command);
+    if ((UINT) tx_queue_receive(&queueElevator3, command, TX_WAIT_FOREVER) != TX_SUCCESS) break;
+
+    //Attention, this case consider that the command[2] may not be numeric, so then uses only command[1] as floor indicator
+    char retFloor = checkFloor(command[1], command[2]);
+    if(retFloor != ' ') floor = retFloor;
+
+    //Check if command internal or external
+    if (command[1] == EXTERNAL_SIGN || command[1] == INTERNAL_SIGN){
+      if(command[1] == INTERNAL_SIGN) switchButton(elevator_type, command[2], true);
+      buttonPressed = true;
+      memset(lastCommand, 0, sizeof lastCommand);
+      if ((UINT) tx_queue_send(&internalQueue3, command, TX_WAIT_FOREVER) != TX_SUCCESS) break;
+    }
+    //====== Checking if button pressed =======
+    if (buttonPressed && strlen(lastCommand) == 0) //This means that a button was pressed, so will receive new command
+      if ((UINT) tx_queue_receive(&internalQueue3, lastCommand, TX_WAIT_FOREVER) != TX_SUCCESS) break;
+    //====== Checking if command to new floor ====
+    if (lastCommand[1] == EXTERNAL_SIGN) //If new command is External
+      targetFloor = getFloor(lastCommand[2], lastCommand[3]);
+    else if (lastCommand[1] == INTERNAL_SIGN)
+      targetFloor = lastCommand[2];
+    //====== Making movements ======
+    if (targetFloor > floor && !inMovement) // Request to move up
+      inMovement = moveOrStopElevator(elevator_type, MOVE_UP);
+    else if (targetFloor < floor && !inMovement) // Request to move down
+      inMovement = moveOrStopElevator(elevator_type, MOVE_DOWN);
+    //====== Stopping if possible =======
+    if (strlen(lastCommand) != 0 && checkIfCanStopElevator(elevator_type, floor, targetFloor)){ //Request to stop move
+      switchButton(elevator_type, targetFloor, false);
+      buttonPressed = false;
+      inMovement = false;
+      memset(lastCommand, 0, sizeof lastCommand);
+    }
+  }
+}
+//Main thread that will treat all the 
+void mainThread(ULONG msg){
+	
+  char bufferRequest[16];
+  int pos = 0;
+  char aux;
+  bool processed = false;
+  while (1) {
+    while (UARTCharsAvail(UART0_BASE)){
+      tx_thread_sleep(2);
+      aux = UARTCharGet(UART0_BASE);
+      if (aux != '\n' && aux != '\r'){
+        bufferRequest[pos] = aux;
+        pos++;
+        if (aux == 'F'){  //Doors closed
+          memset(bufferRequest, 0, sizeof bufferRequest);
+          pos = 0;
+        }
+      }
+      else {
+        pos = 0;
+        processed = true;
+      }
+    }
+
+    if (processed){
+     // printf("Processed=>%s\n", bufferRequest);
+      if (bufferRequest[0] == ELEVATOR_TYPE_1)
+        if ((UINT) tx_queue_send(&queueElevator1, bufferRequest, TX_WAIT_FOREVER) != TX_SUCCESS) break;
+      if (bufferRequest[0] == ELEVATOR_TYPE_2)
+        if ((UINT) tx_queue_send(&queueElevator2, bufferRequest, TX_WAIT_FOREVER) != TX_SUCCESS) break;
+      if (bufferRequest[0] == ELEVATOR_TYPE_3)
+        if ((UINT) tx_queue_send(&queueElevator3, bufferRequest, TX_WAIT_FOREVER) != TX_SUCCESS) break;
+
+      memset(bufferRequest, 0, sizeof bufferRequest);
+      processed = false;
+    }
+  }
+}
+//System threads definition
+void tx_application_define(void *first_unused_memory){
+  CHAR *pointer;
+
 #ifdef TX_ENABLE_EVENT_TRACE
-    tx_trace_enable(trace_buffer, sizeof(trace_buffer), 32);
+  tx_trace_enable(trace_buffer, sizeof(trace_buffer), 32);
 #endif
 
-    tx_byte_pool_create(&byte_pool, "byte pool", byte_pool_memory,DEMO_BYTE_POOL_SIZE);
-    
-    tx_byte_allocate(&byte_pool, (VOID **)&pointer, DEMO_STACK_SIZE,TX_NO_WAIT);
-    tx_thread_create(&thread1, "thread elevador esquerda", elevador_esq, 2,pointer, DEMO_STACK_SIZE,0, 0, 20, TX_AUTO_START);
-    tx_byte_allocate(&byte_pool, (VOID **)&pointer, DEMO_STACK_SIZE,TX_NO_WAIT);
-    tx_thread_create(&thread2, "thread elevador centro", elevador_cen, 3,pointer, DEMO_STACK_SIZE,0, 0, 20, TX_AUTO_START);
-    tx_byte_allocate(&byte_pool, (VOID **)&pointer, DEMO_STACK_SIZE,TX_NO_WAIT);
-    tx_thread_create(&thread3, "thread elevador direita", elevador_dir, 4,pointer, DEMO_STACK_SIZE,0, 0, 20, TX_AUTO_START);
-    tx_byte_allocate(&byte_pool, (VOID **)&pointer, DEMO_STACK_SIZE,TX_NO_WAIT);
-    tx_thread_create(&thread_controll, "thread controll", ControladoraThread, 1,pointer, DEMO_STACK_SIZE,0, 0, 20, TX_AUTO_START);
-    
-    tx_mutex_create(&mutex, "mutex", TX_NO_INHERIT);
-    
-    tx_byte_allocate(&byte_pool, (VOID **)&pointer, DEMO_QUEUE_SIZE * sizeof(ULONG), TX_NO_WAIT);
-    tx_queue_create(&esquerda_uart, "queue elevador esquerda", TX_1_ULONG, pointer,DEMO_QUEUE_SIZE * sizeof(ULONG));
-    tx_byte_allocate(&byte_pool, (VOID **)&pointer, DEMO_QUEUE_SIZE * sizeof(ULONG), TX_NO_WAIT);
-    tx_queue_create(&centro_uart, "queue elevador centro", TX_1_ULONG, pointer,DEMO_QUEUE_SIZE * sizeof(ULONG));
-    tx_byte_allocate(&byte_pool, (VOID **)&pointer, DEMO_QUEUE_SIZE * sizeof(ULONG), TX_NO_WAIT);
-    tx_queue_create(&direita_uart, "queue elevador direita", TX_1_ULONG, pointer,DEMO_QUEUE_SIZE * sizeof(ULONG));
-    tx_byte_allocate(&byte_pool, (VOID **)&pointer, DEMO_QUEUE_SIZE * sizeof(ULONG), TX_NO_WAIT);
-    tx_queue_create(&esquerda_interna, "queue interna esquerda", TX_1_ULONG, pointer, DEMO_QUEUE_SIZE * sizeof(ULONG));
-    tx_byte_allocate(&byte_pool, (VOID **)&pointer, DEMO_QUEUE_SIZE * sizeof(ULONG), TX_NO_WAIT);
-    tx_queue_create(&centro_interna, "queue interna centro", TX_1_ULONG, pointer, DEMO_QUEUE_SIZE * sizeof(ULONG));
-    tx_byte_allocate(&byte_pool, (VOID **)&pointer, DEMO_QUEUE_SIZE * sizeof(ULONG), TX_NO_WAIT);
-    tx_queue_create(&direita_interna, "queue interna direita", TX_1_ULONG, pointer, DEMO_QUEUE_SIZE * sizeof(ULONG));
-    
-    tx_block_release(pointer);
-}     
-        
+  tx_mutex_create(&mutex, "mutex", TX_NO_INHERIT);
+  tx_byte_pool_create(&bytePool, "byte pool", bytePoolMemory, ELEVATOR_BYTE_POOL_SIZE);
+
+  tx_byte_allocate(&bytePool, (VOID **)&pointer, ELEVATOR_STACK_SIZE, TX_NO_WAIT);
+  tx_thread_create(&threadMain, "Main Thread" , mainThread, 1, pointer, ELEVATOR_STACK_SIZE, 0, 0, 20, TX_AUTO_START);
+  
+  tx_byte_allocate(&bytePool, (VOID **)&pointer, ELEVATOR_STACK_SIZE, TX_NO_WAIT);
+  tx_thread_create(&threadElevator1, "Elevator Thread 1", elevator1, 2, pointer , ELEVATOR_STACK_SIZE, 0, 0, 20, TX_AUTO_START);
+  
+  tx_byte_allocate(&bytePool, (VOID **)&pointer, ELEVATOR_STACK_SIZE, TX_NO_WAIT);
+  tx_thread_create(&threadElevator2, "Elevator Thread 2", elevator2, 3, pointer , ELEVATOR_STACK_SIZE, 0, 0, 20, TX_AUTO_START);
+  
+  tx_byte_allocate(&bytePool, (VOID **)&pointer, ELEVATOR_STACK_SIZE, TX_NO_WAIT);
+  tx_thread_create(&threadElevator3, "Elevator Thread 3", elevator3, 4, pointer , ELEVATOR_STACK_SIZE, 0, 0, 20, TX_AUTO_START);
+  
+  tx_byte_allocate(&bytePool, (VOID **)&pointer, ELEVATOR_QUEUE_SIZE * sizeof(ULONG), TX_NO_WAIT);
+  tx_queue_create(&queueElevator1, "Elevator Queue 1", TX_1_ULONG, pointer, ELEVATOR_QUEUE_SIZE * sizeof(ULONG));
+  
+  tx_byte_allocate(&bytePool, (VOID **)&pointer, ELEVATOR_QUEUE_SIZE * sizeof(ULONG), TX_NO_WAIT);
+  tx_queue_create(&queueElevator2, "Elevator Queue 2", TX_1_ULONG, pointer, ELEVATOR_QUEUE_SIZE * sizeof(ULONG));
+  
+  tx_byte_allocate(&bytePool, (VOID **)&pointer, ELEVATOR_QUEUE_SIZE * sizeof(ULONG), TX_NO_WAIT);
+  tx_queue_create(&queueElevator3, "Elevator Queue 3", TX_1_ULONG, pointer, ELEVATOR_QUEUE_SIZE * sizeof(ULONG));
+  
+  tx_byte_allocate(&bytePool, (VOID **)&pointer, ELEVATOR_QUEUE_SIZE * sizeof(ULONG), TX_NO_WAIT);
+  tx_queue_create(&internalQueue1, "Internal Queue 1", TX_1_ULONG, pointer, ELEVATOR_QUEUE_SIZE * sizeof(ULONG));
+  
+  tx_byte_allocate(&bytePool, (VOID **)&pointer, ELEVATOR_QUEUE_SIZE * sizeof(ULONG), TX_NO_WAIT);
+  tx_queue_create(&internalQueue2, "Internal Queue 2", TX_1_ULONG, pointer, ELEVATOR_QUEUE_SIZE * sizeof(ULONG));
+  
+  tx_byte_allocate(&bytePool, (VOID **)&pointer, ELEVATOR_QUEUE_SIZE * sizeof(ULONG), TX_NO_WAIT);
+  tx_queue_create(&internalQueue3, "Internal Queue 3", TX_1_ULONG, pointer, ELEVATOR_QUEUE_SIZE * sizeof(ULONG));
+ 
+  tx_byte_allocate(&bytePool, (VOID **)&pointer, ELEVATOR_BLOCK_POOL_SIZE, TX_NO_WAIT);
+  tx_block_pool_create(&block_pool_0, "block pool 0", sizeof(ULONG), pointer, ELEVATOR_BLOCK_POOL_SIZE);
+  tx_block_allocate(&block_pool_0, (VOID **)&pointer, TX_NO_WAIT);
+
+  tx_block_release(pointer);
+}
