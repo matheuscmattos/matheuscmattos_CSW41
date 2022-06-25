@@ -105,6 +105,7 @@ void inicializacao(char elevador)
   	status_mutex = tx_mutex_put(&mutex);
   	if (status_mutex != TX_SUCCESS)
 		return;
+        
 }
 
 void Led_On_Off(char elevador, char andar, int On)
@@ -249,7 +250,7 @@ void ControladoraThread(ULONG msg)
   {
     while (UARTCharsAvail(UART0_BASE))
     {
-      //tx_thread_sleep(2);
+      tx_thread_sleep(2);
       //Guarda o char recebido
       aux_char = UARTCharGet(UART0_BASE);  
       if (aux_char != '\n' && aux_char != '\r')
@@ -269,40 +270,41 @@ void ControladoraThread(ULONG msg)
         posicaoEntrada = 1;
         }
 		
-	tx_thread_sleep(2);
+	//tx_thread_sleep(2);
 
     }
 
     if (posicaoEntrada)
     {
-      if (chamada[iterador] == 'e')
+      if (chamada[0] == 'e')
       {
         status = tx_queue_send(&esquerda_uart, chamada, TX_WAIT_FOREVER);
         if (status != TX_SUCCESS)
           break;
-        status = tx_queue_send(&esquerda_interna, chamada, TX_WAIT_FOREVER);
-        if (status != TX_SUCCESS)
-          break;
+        //status = tx_queue_send(&esquerda_interna, chamada, TX_WAIT_FOREVER);
+        //if (status != TX_SUCCESS)
+          //break;
       }
-      if (chamada[iterador] == 'c')
+      if (chamada[0] == 'c')
       {
         status = tx_queue_send(&centro_uart, chamada, TX_WAIT_FOREVER);
         if (status != TX_SUCCESS)
           break;
-        status = tx_queue_send(&centro_interna, chamada, TX_WAIT_FOREVER);
-        if (status != TX_SUCCESS)
-          break;
+        //status = tx_queue_send(&centro_interna, chamada, TX_WAIT_FOREVER);
+        //if (status != TX_SUCCESS)
+          //break;
       }
       if (chamada[iterador] == 'd')
       {
         status = tx_queue_send(&direita_uart, chamada, TX_WAIT_FOREVER);
         if (status != TX_SUCCESS)
           break;
-        status = tx_queue_send(&direita_interna, chamada, TX_WAIT_FOREVER);
-        if (status != TX_SUCCESS)
-          break;        
+        //status = tx_queue_send(&direita_interna, chamada, TX_WAIT_FOREVER);
+        //if (status != TX_SUCCESS)
+          //break;        
       }
       memset(chamada, 0, sizeof chamada);
+      posicaoEntrada = -1;
     }
 	tx_thread_sleep(2);
   }
@@ -314,9 +316,9 @@ void elevador_esq(ULONG elevador)
 	char novoAndar = 'a';
 	char posicao[16];
 	char posicaoAtual[16];
-	char aux[16];
+	bool botao = false;
 	int movendo = -1;
-	int tamanho = 0;
+
     
 	
 	UINT status;
@@ -325,6 +327,7 @@ void elevador_esq(ULONG elevador)
 	
 	while (1)
 	{
+          memset(posicao, 0, sizeof posicao);
 	  //limpa e armazena o comando recebido da fila
 	  status = tx_queue_receive(&esquerda_uart, posicao, TX_WAIT_FOREVER);
 	  if (status != TX_SUCCESS)
@@ -347,9 +350,14 @@ void elevador_esq(ULONG elevador)
 	  {
 	    if(posicao[1] == 'I')
 	    Led_On_Off('e', posicao[2], 1);
-	    tamanho++;
+	    //tamanho++;
+            botao = true;
+            memset(posicaoAtual, 0, sizeof posicaoAtual);
+            status = tx_queue_send(&esquerda_interna, posicao, TX_WAIT_FOREVER);
+            if (status != TX_SUCCESS)
+                break;
 	  }
-	  if (tamanho > 0 && strlen(posicaoAtual) == 0)
+	  if (botao && strlen(posicaoAtual) == 0)
 	  {
 	    status = tx_queue_receive(&esquerda_interna, posicaoAtual, TX_WAIT_FOREVER);
 	    if (status != TX_SUCCESS)
@@ -378,10 +386,12 @@ void elevador_esq(ULONG elevador)
 	    movimentacao_elevador('e', 0);
 	    Portas('e');
 	    Led_On_Off('e', novoAndar, 0);
-	    tamanho--;
-            memset(posicao, 0, sizeof posicao);
-	    memset(posicaoAtual, 0, sizeof posicaoAtual);
+	    //tamanho--;
+            botao = false;
+            //memset(posicao, 0, sizeof posicao);
+	    
             movendo = -1;
+            memset(posicaoAtual, 0, sizeof posicaoAtual);
 	  }
 	}
         
@@ -393,10 +403,9 @@ void elevador_cen(ULONG elevador)
 	char novoAndar = 'a';
 	char posicao[16];
 	char posicaoAtual[16];
-	char aux[16];
+	bool botao = false;
 	int movendo = -1;
-	int tamanho = 0;
-    
+
     
 	
 	UINT status;
@@ -405,11 +414,12 @@ void elevador_cen(ULONG elevador)
 	
 	while (1)
 	{
+          memset(posicao, 0, sizeof posicao);
 	  //limpa e armazena o comando recebido da fila
 	  status = tx_queue_receive(&centro_uart, posicao, TX_WAIT_FOREVER);
 	  if (status != TX_SUCCESS)
 	    break;
-          
+		
 	  //verifica a posição atual do elevador
 	  if (posicao[1] >= 48 && posicao[1] <= 57)
 	  {
@@ -422,13 +432,19 @@ void elevador_cen(ULONG elevador)
 	      andar = qual_andar('0', posicao[1]);
 	    }
 	  }
+	  
 	  if (posicao[1] == 'E' || posicao[1] == 'I')
 	  {
 	    if(posicao[1] == 'I')
 	    Led_On_Off('c', posicao[2], 1);
-	    tamanho++;
+	    //tamanho++;
+            botao = true;
+            memset(posicaoAtual, 0, sizeof posicaoAtual);
+            status = tx_queue_send(&centro_interna, posicao, TX_WAIT_FOREVER);
+            if (status != TX_SUCCESS)
+                break;
 	  }
-	  if (tamanho > 0 && strlen(posicaoAtual) == 0)
+	  if (botao && strlen(posicaoAtual) == 0)
 	  {
 	    status = tx_queue_receive(&centro_interna, posicaoAtual, TX_WAIT_FOREVER);
 	    if (status != TX_SUCCESS)
@@ -440,7 +456,7 @@ void elevador_cen(ULONG elevador)
 	  }
 	  else if (posicaoAtual[1] == 'I')
 	  {
-	    novoAndar = posicaoAtual[2];
+            novoAndar = posicaoAtual[2];
 	  }
 	  if (novoAndar > andar && movendo == -1)
 	  {
@@ -457,10 +473,12 @@ void elevador_cen(ULONG elevador)
 	    movimentacao_elevador('c', 0);
 	    Portas('c');
 	    Led_On_Off('c', novoAndar, 0);
-	    tamanho--;
-            memset(posicao, 0, sizeof posicao);
-	    memset(posicaoAtual, 0, sizeof posicaoAtual);
-	    movendo = -1;
+	    //tamanho--;
+            botao = false;
+            //memset(posicao, 0, sizeof posicao);
+	    
+            movendo = -1;
+            memset(posicaoAtual, 0, sizeof posicaoAtual);
 	  }
 	}
 }
@@ -471,10 +489,9 @@ void elevador_dir(ULONG elevador)
 	char novoAndar = 'a';
 	char posicao[16];
 	char posicaoAtual[16];
-	char aux[16];
+	bool botao = false;
 	int movendo = -1;
-	int tamanho = 0;
-    
+
     
 	
 	UINT status;
@@ -483,12 +500,13 @@ void elevador_dir(ULONG elevador)
 	
 	while (1)
 	{
+          memset(posicao, 0, sizeof posicao);
 	  //limpa e armazena o comando recebido da fila
 	  status = tx_queue_receive(&direita_uart, posicao, TX_WAIT_FOREVER);
 	  if (status != TX_SUCCESS)
 	    break;
-	
-          //verifica a posição atual do elevador
+		
+	  //verifica a posição atual do elevador
 	  if (posicao[1] >= 48 && posicao[1] <= 57)
 	  {
 	    if (posicao[2] >= 48 && posicao[2] <= 57)
@@ -500,13 +518,19 @@ void elevador_dir(ULONG elevador)
 	      andar = qual_andar('0', posicao[1]);
 	    }
 	  }
+	  
 	  if (posicao[1] == 'E' || posicao[1] == 'I')
 	  {
 	    if(posicao[1] == 'I')
 	    Led_On_Off('d', posicao[2], 1);
-	    tamanho++;
+	    //tamanho++;
+            botao = true;
+            memset(posicaoAtual, 0, sizeof posicaoAtual);
+            status = tx_queue_send(&direita_interna, posicao, TX_WAIT_FOREVER);
+            if (status != TX_SUCCESS)
+                break;
 	  }
-	  if (tamanho > 0 && strlen(posicaoAtual) == 0)
+	  if (botao && strlen(posicaoAtual) == 0)
 	  {
 	    status = tx_queue_receive(&direita_interna, posicaoAtual, TX_WAIT_FOREVER);
 	    if (status != TX_SUCCESS)
@@ -518,7 +542,7 @@ void elevador_dir(ULONG elevador)
 	  }
 	  else if (posicaoAtual[1] == 'I')
 	  {
-	    novoAndar = posicaoAtual[2];
+            novoAndar = posicaoAtual[2];
 	  }
 	  if (novoAndar > andar && movendo == -1)
 	  {
@@ -530,15 +554,17 @@ void elevador_dir(ULONG elevador)
 	    movimentacao_elevador('d', -1);
 	    movendo = 1;
 	  }
-	  if (novoAndar == andar && strlen(posicaoAtual) != 0)
+	  if (novoAndar == andar)
 	  {
 	    movimentacao_elevador('d', 0);
 	    Portas('d');
 	    Led_On_Off('d', novoAndar, 0);
-	    tamanho--;
-            memset(posicao, 0, sizeof posicao);
-	    memset(posicaoAtual, 0, sizeof posicaoAtual);
-	    movendo = -1;
+	    //tamanho--;
+            botao = false;
+            //memset(posicao, 0, sizeof posicao);
+	    
+            movendo = -1;
+            memset(posicaoAtual, 0, sizeof posicaoAtual);
 	  }
 	}
 }
